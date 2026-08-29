@@ -3,14 +3,15 @@ package status
 import (
 	"context"
 	"encoding/json"
+	"os"
 	"sort"
 	"time"
 
 	"github.com/opencharly/sdk"
 	"github.com/opencharly/sdk/deploykit"
 	"github.com/opencharly/sdk/kit"
-	"github.com/opencharly/sdk/loaderkit"
 	"github.com/opencharly/spec/spec"
+	"gopkg.in/yaml.v3"
 )
 
 // nested_tree.go — the DECLARED nested-deployment tree pre-resolution, ported from
@@ -31,7 +32,9 @@ import (
 const nestedProbeTimeout = 4 * time.Second
 
 // resolvedProject fetches the resolved-project envelope over the reverse channel — the same
-// InvokeProvider("build","project") seam candy/plugin-check and candy/plugin-substrate already consume.
+// InvokeProvider("build","project") seam candy/plugin-check and candy/plugin-substrate already
+// consume. The host's resolveProjectEnvelope (plugin-build) caches the result persistently, so
+// this is a plain forward.
 func resolvedProject(ex *sdk.Executor, ctx context.Context) (*spec.ResolvedProject, error) {
 	reqJSON, err := json.Marshal(spec.ResolvedProjectRequest{Dir: ""})
 	if err != nil {
@@ -48,12 +51,6 @@ func resolvedProject(ex *sdk.Executor, ctx context.Context) (*spec.ResolvedProje
 	return &rp, nil
 }
 
-// buildStatusRootsTree pre-resolves the DECLARED nested-deployment tree into the wire-safe
-// []spec.StatusNestedNode shape the PURE overlay folds. It is a thin I/O wrapper: fetch the
-// merged roots (the only part that needs ex/ctx), then hand off to the PURE, directly-testable
-// buildStatusRootsTreeFrom (mirrors candy/plugin-substrate's collectAndroidDeployNodes split —
-// I/O in the outer function, a plain-parameter pure function underneath, so a test never touches
-// deploykit.LoadFleetConfig()'s real host file, R3).
 func buildStatusRootsTree(ex *sdk.Executor, ctx context.Context, nested bool) ([]spec.StatusNestedNode, error) {
 	rawRoots, err := mergedNestedRoots(ex, ctx)
 	if err != nil {
@@ -174,7 +171,27 @@ func nestedChildKind(child *deploykit.FleetNode) spec.SubstrateKind {
 // helper is now the ONE shared implementation all four call. Returns (nil, nil) on an
 // absent/empty overlay, matching deploykit.LoadFleetConfig's own contract.
 func loadFleetConfig(ex *sdk.Executor, ctx context.Context) (*deploykit.FleetConfig, error) {
-	return loaderkit.LoadHostFleetConfigViaExecutor(ctx, ex)
+	// Direct read of the per-host config — a lightweight yaml.Unmarshal into the
+	// FleetConfig, NOT the full LoadUnified project walk (which allocates ~197MB
+	// per load — the GC pressure that dominated `charly status`). The per-host
+	// config is a small file with no imports; the direct read is
+	// placement-invariant (the file is on the same host).
+	path, err := spec.DefaultDeployConfigPath()
+	if err != nil {
+		return nil, nil
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	var dc deploykit.FleetConfig
+	if err := yaml.Unmarshal(data, &dc); err != nil {
+		return nil, err
+	}
+	return &dc, nil
 }
 
 // mergedNestedRoots returns the declared deployment tree (project + per-machine overlay) — the
@@ -210,8 +227,6 @@ func mergedNestedRootsFrom(rp *spec.ResolvedProject, perMachine *deploykit.Fleet
 	return merged.Fleet
 }
 
-// sortedRootKeys returns deploy-tree root keys in deterministic order so the tree-builder walks
-// children in stable order across runs.
 func sortedRootKeys(roots map[string]deploykit.FleetNode) []string {
 	keys := make([]string, 0, len(roots))
 	for k := range roots {
@@ -220,3 +235,4 @@ func sortedRootKeys(roots map[string]deploykit.FleetNode) []string {
 	sort.Strings(keys)
 	return keys
 }
+
