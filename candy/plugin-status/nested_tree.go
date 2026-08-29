@@ -2,15 +2,20 @@ package status
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
 	"sort"
 	"time"
 
 	"github.com/opencharly/sdk"
 	"github.com/opencharly/sdk/deploykit"
 	"github.com/opencharly/sdk/kit"
-	"github.com/opencharly/sdk/loaderkit"
 	"github.com/opencharly/spec/spec"
+	"gopkg.in/yaml.v3"
 )
 
 // nested_tree.go — the DECLARED nested-deployment tree pre-resolution, ported from
@@ -31,8 +36,20 @@ import (
 const nestedProbeTimeout = 4 * time.Second
 
 // resolvedProject fetches the resolved-project envelope over the reverse channel — the same
-// InvokeProvider("build","project") seam candy/plugin-check and candy/plugin-substrate already consume.
+// InvokeProvider("build","project") seam candy/plugin-check and candy/plugin-substrate already
+// consume. CACHED persistently: the project load (LoadUnified over the full import closure) is the
+// dominant cost of `charly status` (measured ~4.4s + GC pressure), and the project does not change
+// often — only an edit to charly.yml or its imports mutates it. The first call after the TTL
+// expires re-fetches with user feedback; every subsequent call within the TTL reads the cache, so
+// status is sub-second after the first run.
 func resolvedProject(ex *sdk.Executor, ctx context.Context) (*spec.ResolvedProject, error) {
+	cachePath, key, err := projectCacheKey()
+	if err == nil {
+		if rp, ok := readProjectCache(cachePath, key); ok {
+			return rp, nil
+		}
+	}
+	fmt.Fprintf(os.Stderr, "charly: resolving project (first run — may take a moment)...\n")
 	reqJSON, err := json.Marshal(spec.ResolvedProjectRequest{Dir: ""})
 	if err != nil {
 		return nil, err
@@ -45,7 +62,86 @@ func resolvedProject(ex *sdk.Executor, ctx context.Context) (*spec.ResolvedProje
 	if uerr := json.Unmarshal(out, &rp); uerr != nil {
 		return nil, uerr
 	}
+	if cachePath != "" {
+		_ = writeProjectCache(cachePath, key, &rp)
+	}
 	return &rp, nil
+}
+
+// projectCacheTTL is how long a cached resolved project is trusted before a
+// re-fetch. The project changes only on an edit to charly.yml or its imports,
+// so a 5-minute TTL makes consecutive status runs fast while still seeing edits
+// within a few minutes.
+const projectCacheTTL = 5 * time.Minute
+
+// projectCacheKey returns the resolved-project cache file + a content key (the
+// charly.yml content hash + the project dir), so an edit to the project
+// invalidates the cache immediately.
+func projectCacheKey() (string, string, error) {
+	cfg, err := spec.DefaultDeployConfigPath()
+	if err != nil {
+		return "", "", err
+	}
+	cachePath := filepath.Join(filepath.Dir(cfg), "cache", "project.json")
+	// The project dir: the cwd (the status command runs from the project).
+	dir, err := os.Getwd()
+	if err != nil {
+		return cachePath, "", nil
+	}
+	data, err := os.ReadFile(filepath.Join(dir, spec.UnifiedFileName))
+	if err != nil {
+		return cachePath, dir, nil
+	}
+	h := sha256.Sum256(data)
+	return cachePath, dir + ":" + hex.EncodeToString(h[:]), nil
+}
+
+// projectCacheFile is the on-disk cache shape: the content key + the resolved
+// project + the resolution time (RFC3339).
+type projectCacheFile struct {
+	Key      string                `json:"key"`
+	Resolved string                `json:"resolved"`
+	Project  spec.ResolvedProject  `json:"project"`
+}
+
+// readProjectCache returns the cached resolved project if fresh for key, else
+// (nil, false). A corrupt/absent file is a cache miss.
+func readProjectCache(path, key string) (*spec.ResolvedProject, bool) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, false
+	}
+	var cf projectCacheFile
+	if json.Unmarshal(data, &cf) != nil || cf.Key != key {
+		return nil, false
+	}
+	resolved, err := time.Parse(time.RFC3339, cf.Resolved)
+	if err != nil || time.Since(resolved) > projectCacheTTL {
+		return nil, false
+	}
+	return &cf.Project, true
+}
+
+// writeProjectCache persists the resolved project under the advisory lock
+// (best-effort).
+func writeProjectCache(path, key string, rp *spec.ResolvedProject) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	cf := projectCacheFile{
+		Key:      key,
+		Resolved: time.Now().UTC().Format(time.RFC3339),
+		Project:  *rp,
+	}
+	data, err := json.Marshal(cf)
+	if err != nil {
+		return err
+	}
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, data, 0o644); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
 }
 
 // buildStatusRootsTree pre-resolves the DECLARED nested-deployment tree into the wire-safe
@@ -174,7 +270,27 @@ func nestedChildKind(child *deploykit.FleetNode) spec.SubstrateKind {
 // helper is now the ONE shared implementation all four call. Returns (nil, nil) on an
 // absent/empty overlay, matching deploykit.LoadFleetConfig's own contract.
 func loadFleetConfig(ex *sdk.Executor, ctx context.Context) (*deploykit.FleetConfig, error) {
-	return loaderkit.LoadHostFleetConfigViaExecutor(ctx, ex)
+	// Direct read of the per-host config — a lightweight yaml.Unmarshal into the
+	// FleetConfig, NOT the full LoadUnified project walk (which allocates ~197MB
+	// per load — the GC pressure that dominated `charly status`). The per-host
+	// config is a small file with no imports; the direct read is
+	// placement-invariant (the file is on the same host).
+	path, err := spec.DefaultDeployConfigPath()
+	if err != nil {
+		return nil, nil
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	var dc deploykit.FleetConfig
+	if err := yaml.Unmarshal(data, &dc); err != nil {
+		return nil, err
+	}
+	return &dc, nil
 }
 
 // mergedNestedRoots returns the declared deployment tree (project + per-machine overlay) — the
