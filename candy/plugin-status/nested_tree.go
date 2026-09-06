@@ -25,6 +25,14 @@ import (
 // buildStatusRootsTree resolves the declared tree (project, via InvokeProvider("build","project"),
 // merged with the operator's per-host overlay via deploykit.LoadFleetConfig) into the wire-safe
 // []spec.StatusNestedNode shape overlay.go's PURE fold (applyNestedOverlay) consumes.
+//
+// Member tree (spec #103 + sdk #221): the deploy node carries ONE ordered Member list
+// (Name + Position + Node); the along-side-vs-into classification is DERIVED from the member's
+// authored Position. This tree-builder consumes ONLY the InSubstrateMembers() — members deployed
+// INTO their parent's venue, the ones addressed by a dotted path (parent.child) — because a
+// deploy-level member is a folded top-level addressable Fleet entry at load (it surfaces as its
+// own root here, never re-nested under its owner), the SAME convention WalkDeploymentTree
+// (deploykit/deploy_tree.go) walks by.
 
 // nestedProbeTimeout bounds the per-child live probe under --nested. A child whose multi-hop venue
 // doesn't answer within this window renders Status:"unreachable" instead of blocking the whole
@@ -61,8 +69,9 @@ func buildStatusRootsTree(ex *sdk.Executor, ctx context.Context, nested bool) ([
 
 // buildStatusRootsTreeFrom is the PURE tree-assembly step: every decision (which kind a node is,
 // which flat-row keys index it, and — under nested — its live-probe verdict) is made HERE, given
-// an already-merged roots map. Only roots WITH children are emitted (the pure overlay skips a
-// childless root anyway).
+// an already-merged roots map. Only roots WITH in-substrate members are emitted (the pure overlay
+// skips a childless root anyway); a root carrying ONLY deploy-level members is childless in the
+// nested sense — those members are their own top-level Fleet entries.
 func buildStatusRootsTreeFrom(rawRoots map[string]deploykit.FleetNode, nested bool) []spec.StatusNestedNode {
 	if len(rawRoots) == 0 {
 		return nil
@@ -70,7 +79,8 @@ func buildStatusRootsTreeFrom(rawRoots map[string]deploykit.FleetNode, nested bo
 	var out []spec.StatusNestedNode
 	for _, key := range sortedRootKeys(rawRoots) {
 		root := rawRoots[key]
-		if !root.HasChildren() {
+		children := buildStatusChildNodes(key, &root, rawRoots, nested)
+		if len(children) == 0 {
 			continue
 		}
 		out = append(out, spec.StatusNestedNode{
@@ -79,38 +89,36 @@ func buildStatusRootsTreeFrom(rawRoots map[string]deploykit.FleetNode, nested bo
 			Kind:        nestedChildKind(&root),
 			HasChildren: true,
 			MatchKeys:   []string{key},
-			Children:    buildStatusChildNodes(key, &root, rawRoots, nested),
+			Children:    children,
 		})
 	}
 	return out
 }
 
-// buildStatusChildNodes recurses buildStatusRootsTree's per-root walk into the declared children
-// of parentNode (at dotted path parentPath). Each child's MatchKeys carries BOTH candidate flat-row
-// keys in the SAME priority order the pure overlay's claimFlatRow tries them (dotted path first,
-// then the flattened NestedContainerName).
+// buildStatusChildNodes recurses buildStatusRootsTree's per-root walk into the IN-SUBSTRATE
+// members of parentNode (at dotted path parentPath), in the member tree's authored order —
+// the ordered Member list replaces the former sorted Children map. Each child's MatchKeys
+// carries BOTH candidate flat-row keys in the SAME priority order the pure overlay's
+// claimFlatRow tries them (dotted path first, then the flattened NestedContainerName).
 func buildStatusChildNodes(parentPath string, parentNode *deploykit.FleetNode, rawRoots map[string]deploykit.FleetNode, nested bool) []*spec.StatusNestedNode {
-	if !parentNode.HasChildren() {
+	members := parentNode.InSubstrateMembers()
+	if len(members) == 0 {
 		return nil
 	}
-	keys := make([]string, 0, len(parentNode.Children))
-	for k := range parentNode.Children {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
 
-	out := make([]*spec.StatusNestedNode, 0, len(keys))
-	for _, k := range keys {
-		child := parentNode.Children[k]
-		if child == nil {
+	out := make([]*spec.StatusNestedNode, 0, len(members))
+	for _, m := range members {
+		if m.Node == nil {
 			continue
 		}
+		child := m.Node
+		k := m.Name
 		childPath := parentPath + "." + k
 		node := &spec.StatusNestedNode{
 			Key:         k,
 			Path:        childPath,
 			Kind:        nestedChildKind(child),
-			HasChildren: child.HasChildren(),
+			HasChildren: child.HasMembers() && len(child.InSubstrateMembers()) > 0,
 			MatchKeys:   []string{childPath, kit.NestedContainerName(childPath)},
 			Children:    buildStatusChildNodes(childPath, child, rawRoots, nested),
 		}
@@ -125,7 +133,7 @@ func buildStatusChildNodes(parentPath string, parentNode *deploykit.FleetNode, r
 // probeNestedChildLive resolves the dotted path to a DeployExecutor chain and runs a trivial
 // liveness probe under nestedProbeTimeout. Returns "reachable" on a clean exit, "unreachable" on
 // any error / non-zero exit / timeout. The chain construction reuses deploykit.ResolveDeployChain —
-// the SAME primitive `charly fleet add` and `charly check live parent.child` use (R3).
+// the SAME primitive `charly deploy` and `charly check live parent.child` use (R3).
 func probeNestedChildLive(childPath string, roots map[string]deploykit.FleetNode) string {
 	leaf, chain, err := deploykit.ResolveDeployChain(roots, childPath, nil)
 	if err != nil || chain == nil || leaf == nil {
@@ -235,4 +243,3 @@ func sortedRootKeys(roots map[string]deploykit.FleetNode) []string {
 	sort.Strings(keys)
 	return keys
 }
-
