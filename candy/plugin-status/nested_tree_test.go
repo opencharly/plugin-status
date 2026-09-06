@@ -17,20 +17,22 @@ import (
 // dedup) lives in overlay.go, operating on the []spec.StatusNestedNode this file builds — its
 // byte-parity is proven by overlay_golden_test.go. This file proves the pre-resolution alone: the
 // tree shape, the MatchKeys candidate order, Kind classification, and the --nested live-probe
-// threading.
+// threading. Fixtures use the ONE ordered member tree (spec #103 + sdk #221): nested children are
+// Member entries at the in-substrate position; deploy-level members must never surface as nested
+// children (they are folded top-level Fleet entries).
 
 // nestedRoots builds a minimal declared roots map carrying one declared nested topology: a
 // target:pod parent check-android-emulator-pod with two target:android nested children device and
 // device-net (the check-android-emulator-pod shape), plus an unrelated flat pod deploy the
-// tree-builder must leave alone (no root emitted for a childless entry).
+// tree-builder must leave alone (no root emitted for a memberless entry).
 func nestedRoots() map[string]deploykit.FleetNode {
 	return map[string]deploykit.FleetNode{
 		"check-android-emulator-pod": {
 			Target: "pod",
 			Image:  "android-emulator",
-			Children: map[string]*deploykit.FleetNode{
-				"device":     {Target: "android", From: "pixel9a-36", AddCandy: []string{"android-test-apps"}},
-				"device-net": {Target: "android", From: "pixel9a-endpoint", AddCandy: []string{"android-apidemos"}},
+			Member: []spec.Member{
+				{Name: "device", Position: spec.PositionInSubstrate, Node: &deploykit.FleetNode{Target: "android", From: "pixel9a-36", AddCandy: []string{"android-test-apps"}}},
+				{Name: "device-net", Position: spec.PositionInSubstrate, Node: &deploykit.FleetNode{Target: "android", From: "pixel9a-endpoint", AddCandy: []string{"android-apidemos"}}},
 			},
 		},
 		"some-flat-pod": {Target: "pod", Image: "redis"},
@@ -59,7 +61,7 @@ func findChildNode(children []*spec.StatusNestedNode, key string) *spec.StatusNe
 
 // TestBuildStatusRootsTreeFrom_ChildlessRootSkipped verifies a declared entry with no children
 // (some-flat-pod) never emits a root node — the candy overlay skips a childless root anyway
-// (`if !root.HasChildren() { continue }`).
+// (buildStatusRootsTreeFrom skips a root with no in-substrate members).
 func TestBuildStatusRootsTreeFrom_ChildlessRootSkipped(t *testing.T) {
 	roots := buildStatusRootsTreeFrom(nestedRoots(), false)
 	if len(roots) != 1 {
@@ -129,8 +131,8 @@ func TestBuildStatusRootsTreeFrom_MatchKeysOrderVmPod(t *testing.T) {
 		parent: {
 			Target: "vm",
 			From:   "stack-vm",
-			Children: map[string]*deploykit.FleetNode{
-				"web": {Target: "pod", Image: "nginx"},
+			Member: []spec.Member{
+				{Name: "web", Position: spec.PositionInSubstrate, Node: &deploykit.FleetNode{Target: "pod", Image: "nginx"}},
 			},
 		},
 	}
@@ -184,6 +186,48 @@ func TestBuildStatusRootsTreeFrom_NilConfigNoOp(t *testing.T) {
 	roots := buildStatusRootsTreeFrom(nil, false)
 	if len(roots) != 0 {
 		t.Fatalf("nil-config tree must be empty, got %+v", roots)
+	}
+}
+
+// TestBuildStatusRootsTreeFrom_MemberPositionClass verifies the member-tree position
+// classification (spec #103): only IN-SUBSTRATE members surface as nested children; a
+// DEPLOY-LEVEL member is a folded top-level Fleet entry — it must never appear nested under its
+// owner, and a root carrying ONLY deploy-level members emits no root at all (memberless in the
+// nested sense, the successor of the former HasChildren gate).
+func TestBuildStatusRootsTreeFrom_MemberPositionClass(t *testing.T) {
+	roots := map[string]deploykit.FleetNode{
+		"pod-parent": {
+			Target: "pod",
+			Image:  "sway-browser-vnc",
+			Member: []spec.Member{
+				// deploy-level: folded to its own top-level entry at load — NOT nested here.
+				{Name: "sidecar-svc", Position: spec.PositionDeployLevel, Node: &deploykit.FleetNode{Target: "pod", Image: "redis"}},
+				// in-substrate: the one genuinely nested child.
+				{Name: "nested-pod", Position: spec.PositionInSubstrate, Node: &deploykit.FleetNode{Target: "pod", Image: "nginx"}},
+			},
+		},
+		"deploy-level-only": {
+			Target: "vm",
+			From:   "stack-vm",
+			Member: []spec.Member{
+				{Name: "fleet-vm", Position: spec.PositionDeployLevel, Node: &deploykit.FleetNode{Target: "local"}},
+			},
+		},
+	}
+	tree := buildStatusRootsTreeFrom(roots, false)
+
+	if len(tree) != 1 {
+		t.Fatalf("tree = %d roots, want 1 (deploy-level-only emits no root): %+v", len(tree), tree)
+	}
+	root := findRootNode(tree, "pod-parent")
+	if root == nil {
+		t.Fatalf("root %q not found in %+v", "pod-parent", tree)
+	}
+	if len(root.Children) != 1 {
+		t.Fatalf("root.Children = %d, want 1 (deploy-level member excluded): %+v", len(root.Children), root.Children)
+	}
+	if root.Children[0].Key != "nested-pod" {
+		t.Errorf("only nested child = %q, want %q", root.Children[0].Key, "nested-pod")
 	}
 }
 
