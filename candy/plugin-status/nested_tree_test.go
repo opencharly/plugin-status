@@ -11,7 +11,7 @@ import (
 // nested_tree_test.go — ported from charly/status_nested_test.go (K5): the declared
 // nested-deployment tree pre-resolution moved plugin-side (nested_tree.go), so these tests moved
 // with it. Exercises the PURE buildStatusRootsTreeFrom/mergedNestedRootsFrom split directly with
-// in-memory deploykit.FleetNode fixtures — no executor stub, no host file I/O (R3, mirrors
+// in-memory deploykit.DeployNode fixtures — no executor stub, no host file I/O (R3, mirrors
 // candy/plugin-substrate's collectAndroidDeployNodes test pattern). The PURE fold
 // (claim -> inherit real data -> drop from top level; synthesize declared/nested; sorted order;
 // dedup) lives in overlay.go, operating on the []spec.StatusNestedNode this file builds — its
@@ -19,20 +19,20 @@ import (
 // tree shape, the MatchKeys candidate order, Kind classification, and the --nested live-probe
 // threading. Fixtures use the ONE ordered member tree (spec #103 + sdk #221): nested children are
 // Member entries at the in-substrate position; deploy-level members must never surface as nested
-// children (they are folded top-level Fleet entries).
+// children (they are folded top-level Deploy entries).
 
 // nestedRoots builds a minimal declared roots map carrying one declared nested topology: a
 // target:pod parent check-android-emulator-pod with two target:android nested children device and
 // device-net (the check-android-emulator-pod shape), plus an unrelated flat pod deploy the
 // tree-builder must leave alone (no root emitted for a memberless entry).
-func nestedRoots() map[string]deploykit.FleetNode {
-	return map[string]deploykit.FleetNode{
+func nestedRoots() map[string]deploykit.DeployNode {
+	return map[string]deploykit.DeployNode{
 		"check-android-emulator-pod": {
 			Target: "pod",
 			Image:  "android-emulator",
 			Member: []spec.Member{
-				{Name: "device", Position: spec.PositionInSubstrate, Node: &deploykit.FleetNode{Target: "android", From: "pixel9a-36", AddCandy: []string{"android-test-apps"}}},
-				{Name: "device-net", Position: spec.PositionInSubstrate, Node: &deploykit.FleetNode{Target: "android", From: "pixel9a-endpoint", AddCandy: []string{"android-apidemos"}}},
+				{Name: "device", Position: spec.PositionInSubstrate, Node: &deploykit.DeployNode{Target: "android", From: "pixel9a-36", AddCandy: []string{"android-test-apps"}}},
+				{Name: "device-net", Position: spec.PositionInSubstrate, Node: &deploykit.DeployNode{Target: "android", From: "pixel9a-endpoint", AddCandy: []string{"android-apidemos"}}},
 			},
 		},
 		"some-flat-pod": {Target: "pod", Image: "redis"},
@@ -127,12 +127,12 @@ func TestBuildStatusRootsTreeFrom_DeclaredChildren(t *testing.T) {
 // priority order the former claimFlatRow tried them in.
 func TestBuildStatusRootsTreeFrom_MatchKeysOrderVmPod(t *testing.T) {
 	const parent = "stack-vm"
-	roots := map[string]deploykit.FleetNode{
+	roots := map[string]deploykit.DeployNode{
 		parent: {
 			Target: "vm",
 			From:   "stack-vm",
 			Member: []spec.Member{
-				{Name: "web", Position: spec.PositionInSubstrate, Node: &deploykit.FleetNode{Target: "pod", Image: "nginx"}},
+				{Name: "web", Position: spec.PositionInSubstrate, Node: &deploykit.DeployNode{Target: "pod", Image: "nginx"}},
 			},
 		},
 	}
@@ -191,26 +191,26 @@ func TestBuildStatusRootsTreeFrom_NilConfigNoOp(t *testing.T) {
 
 // TestBuildStatusRootsTreeFrom_MemberPositionClass verifies the member-tree position
 // classification (spec #103): only IN-SUBSTRATE members surface as nested children; a
-// DEPLOY-LEVEL member is a folded top-level Fleet entry — it must never appear nested under its
+// DEPLOY-LEVEL member is a folded top-level Deploy entry — it must never appear nested under its
 // owner, and a root carrying ONLY deploy-level members emits no root at all (memberless in the
 // nested sense, the successor of the former HasChildren gate).
 func TestBuildStatusRootsTreeFrom_MemberPositionClass(t *testing.T) {
-	roots := map[string]deploykit.FleetNode{
+	roots := map[string]deploykit.DeployNode{
 		"pod-parent": {
 			Target: "pod",
 			Image:  "sway-browser-vnc",
 			Member: []spec.Member{
 				// deploy-level: folded to its own top-level entry at load — NOT nested here.
-				{Name: "sidecar-svc", Position: spec.PositionDeployLevel, Node: &deploykit.FleetNode{Target: "pod", Image: "redis"}},
+				{Name: "sidecar-svc", Position: spec.PositionDeployLevel, Node: &deploykit.DeployNode{Target: "pod", Image: "redis"}},
 				// in-substrate: the one genuinely nested child.
-				{Name: "nested-pod", Position: spec.PositionInSubstrate, Node: &deploykit.FleetNode{Target: "pod", Image: "nginx"}},
+				{Name: "nested-pod", Position: spec.PositionInSubstrate, Node: &deploykit.DeployNode{Target: "pod", Image: "nginx"}},
 			},
 		},
 		"deploy-level-only": {
 			Target: "vm",
 			From:   "stack-vm",
 			Member: []spec.Member{
-				{Name: "fleet-vm", Position: spec.PositionDeployLevel, Node: &deploykit.FleetNode{Target: "local"}},
+				{Name: "deploy-vm", Position: spec.PositionDeployLevel, Node: &deploykit.DeployNode{Target: "local"}},
 			},
 		},
 	}
@@ -241,8 +241,8 @@ func TestMergedNestedRootsFrom_PerMachineWinsPerKey(t *testing.T) {
 			"redis": {Target: "pod", Image: "redis"},
 		},
 	}
-	perMachine := &deploykit.FleetConfig{
-		Fleet: map[string]deploykit.FleetNode{
+	perMachine := &deploykit.DeployConfig{
+		Deploy: map[string]deploykit.DeployNode{
 			"redis": {Target: "vm", From: "redis-vm"},
 		},
 	}

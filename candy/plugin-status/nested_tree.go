@@ -16,21 +16,21 @@ import (
 
 // nested_tree.go — the DECLARED nested-deployment tree pre-resolution, ported from
 // charly/status_nested.go (K5). The former host header claimed this was CORE-COUPLED
-// ("FleetConfig/ResolveDeployChain/NestedExecutor... a plugin cannot decode or dial") —
+// ("DeployConfig/ResolveDeployChain/NestedExecutor... a plugin cannot decode or dial") —
 // that claim was STALE relative to what candy/plugin-substrate's own android status collector
-// already proved: deploykit.LoadFleetConfig/MergeDeployConfigs/ClassifyTarget/ResolveDeployChain
+// already proved: deploykit.LoadDeployConfig/MergeDeployConfigs/ClassifyTarget/ResolveDeployChain
 // are ALL sdk-portable, so a plugin decodes + dials them exactly like the host did. The ONLY thing
 // that genuinely could not cross the process boundary was never true — it was never attempted.
 //
 // buildStatusRootsTree resolves the declared tree (project, via InvokeProvider("build","project"),
-// merged with the operator's per-host overlay via deploykit.LoadFleetConfig) into the wire-safe
+// merged with the operator's per-host overlay via deploykit.LoadDeployConfig) into the wire-safe
 // []spec.StatusNestedNode shape overlay.go's PURE fold (applyNestedOverlay) consumes.
 //
 // Member tree (spec #103 + sdk #221): the deploy node carries ONE ordered Member list
 // (Name + Position + Node); the along-side-vs-into classification is DERIVED from the member's
 // authored Position. This tree-builder consumes ONLY the InSubstrateMembers() — members deployed
 // INTO their parent's venue, the ones addressed by a dotted path (parent.child) — because a
-// deploy-level member is a folded top-level addressable Fleet entry at load (it surfaces as its
+// deploy-level member is a folded top-level addressable Deploy entry at load (it surfaces as its
 // own root here, never re-nested under its owner), the SAME convention WalkDeploymentTree
 // (deploykit/deploy_tree.go) walks by.
 
@@ -71,8 +71,8 @@ func buildStatusRootsTree(ex *sdk.Executor, ctx context.Context, nested bool) ([
 // which flat-row keys index it, and — under nested — its live-probe verdict) is made HERE, given
 // an already-merged roots map. Only roots WITH in-substrate members are emitted (the pure overlay
 // skips a childless root anyway); a root carrying ONLY deploy-level members is childless in the
-// nested sense — those members are their own top-level Fleet entries.
-func buildStatusRootsTreeFrom(rawRoots map[string]deploykit.FleetNode, nested bool) []spec.StatusNestedNode {
+// nested sense — those members are their own top-level Deploy entries.
+func buildStatusRootsTreeFrom(rawRoots map[string]deploykit.DeployNode, nested bool) []spec.StatusNestedNode {
 	if len(rawRoots) == 0 {
 		return nil
 	}
@@ -100,7 +100,7 @@ func buildStatusRootsTreeFrom(rawRoots map[string]deploykit.FleetNode, nested bo
 // the ordered Member list replaces the former sorted Children map. Each child's MatchKeys
 // carries BOTH candidate flat-row keys in the SAME priority order the pure overlay's
 // claimFlatRow tries them (dotted path first, then the flattened NestedContainerName).
-func buildStatusChildNodes(parentPath string, parentNode *deploykit.FleetNode, rawRoots map[string]deploykit.FleetNode, nested bool) []*spec.StatusNestedNode {
+func buildStatusChildNodes(parentPath string, parentNode *deploykit.DeployNode, rawRoots map[string]deploykit.DeployNode, nested bool) []*spec.StatusNestedNode {
 	members := parentNode.InSubstrateMembers()
 	if len(members) == 0 {
 		return nil
@@ -134,7 +134,7 @@ func buildStatusChildNodes(parentPath string, parentNode *deploykit.FleetNode, r
 // liveness probe under nestedProbeTimeout. Returns "reachable" on a clean exit, "unreachable" on
 // any error / non-zero exit / timeout. The chain construction reuses deploykit.ResolveDeployChain —
 // the SAME primitive `charly deploy` and `charly check live parent.child` use (R3).
-func probeNestedChildLive(childPath string, roots map[string]deploykit.FleetNode) string {
+func probeNestedChildLive(childPath string, roots map[string]deploykit.DeployNode) string {
 	leaf, chain, err := deploykit.ResolveDeployChain(roots, childPath, nil)
 	if err != nil || chain == nil || leaf == nil {
 		return "unreachable"
@@ -151,7 +151,7 @@ func probeNestedChildLive(childPath string, roots map[string]deploykit.FleetNode
 // nestedChildKind maps a nested node's target to the SubstrateKind used for the row's KIND cell.
 // deploykit.ClassifyTarget normalizes empty/legacy spellings, so pod/vm/kubernetes/local/android all
 // resolve to their canonical kind.
-func nestedChildKind(child *deploykit.FleetNode) spec.SubstrateKind {
+func nestedChildKind(child *deploykit.DeployNode) spec.SubstrateKind {
 	switch deploykit.ClassifyTarget(child) {
 	case "vm":
 		return spec.SubstrateVM
@@ -166,21 +166,21 @@ func nestedChildKind(child *deploykit.FleetNode) spec.SubstrateKind {
 	}
 }
 
-// loadFleetConfig reads the per-host deploy overlay (~/.config/charly/charly.yml) via the
-// cycle-free plugin-side helper loaderkit.LoadHostFleetConfigViaExecutor (#55 coneC Unit C2 —
-// this retired the former deploykit.LoadFleetConfigViaSeam host-handler round-trip;
+// loadDeployConfig reads the per-host deploy overlay (~/.config/charly/charly.yml) via the
+// cycle-free plugin-side helper loaderkit.LoadHostDeployConfigViaExecutor (#55 coneC Unit C2 —
+// this retired the former deploykit.LoadDeployConfigViaSeam host-handler round-trip;
 // loaderkit already imports deploykit so the
 // helper lives there and a plugin calls it directly, placement-invariant — the bare
-// deploykit.LoadFleetConfig silently no-ops outside charly-core's own init() since
+// deploykit.LoadDeployConfig silently no-ops outside charly-core's own init() since
 // deploykit.DeployStateHost is only ever registered there, never by an out-of-process plugin
-// process). R3 hoist (charly#176 round 1): the former LoadFleetConfigViaSeam itself hoisted four
+// process). R3 hoist (charly#176 round 1): the former LoadDeployConfigViaSeam itself hoisted four
 // near-identical local copies (candy/plugin-substrate's status_flat.go,
 // candy/plugin-fleet/ephemeral.go, candy/plugin-pod/remove_orchestration.go, this one); the C2
 // helper is now the ONE shared implementation all four call. Returns (nil, nil) on an
-// absent/empty overlay, matching deploykit.LoadFleetConfig's own contract.
-func loadFleetConfig(ex *sdk.Executor, ctx context.Context) (*deploykit.FleetConfig, error) {
+// absent/empty overlay, matching deploykit.LoadDeployConfig's own contract.
+func loadDeployConfig(ex *sdk.Executor, ctx context.Context) (*deploykit.DeployConfig, error) {
 	// Direct read of the per-host config — a lightweight yaml.Unmarshal into the
-	// FleetConfig, NOT the full LoadUnified project walk (which allocates ~197MB
+	// DeployConfig, NOT the full LoadUnified project walk (which allocates ~197MB
 	// per load — the GC pressure that dominated `charly status`). The per-host
 	// config is a small file with no imports; the direct read is
 	// placement-invariant (the file is on the same host).
@@ -195,7 +195,7 @@ func loadFleetConfig(ex *sdk.Executor, ctx context.Context) (*deploykit.FleetCon
 		}
 		return nil, err
 	}
-	var dc deploykit.FleetConfig
+	var dc deploykit.DeployConfig
 	if err := yaml.Unmarshal(data, &dc); err != nil {
 		return nil, err
 	}
@@ -205,37 +205,37 @@ func loadFleetConfig(ex *sdk.Executor, ctx context.Context) (*deploykit.FleetCon
 // mergedNestedRoots returns the declared deployment tree (project + per-machine overlay) — the
 // I/O half: fetch the project envelope + the operator's per-host overlay, then hand off to the
 // PURE mergedNestedRootsFrom. Mirrors candy/plugin-substrate's status_android_collect.go split
-// (fetchResolvedProject + loadFleetConfig in the outer function, collectAndroidDeployNodes as the
+// (fetchResolvedProject + loadDeployConfig in the outer function, collectAndroidDeployNodes as the
 // pure plain-parameter function) exactly, R3.
-func mergedNestedRoots(ex *sdk.Executor, ctx context.Context) (map[string]deploykit.FleetNode, error) {
+func mergedNestedRoots(ex *sdk.Executor, ctx context.Context) (map[string]deploykit.DeployNode, error) {
 	rp, err := resolvedProject(ex, ctx)
 	if err != nil {
 		return nil, err
 	}
 	// Best-effort: absence of a per-machine overlay is normal (mirrors
 	// candy/plugin-substrate's newFlatCollector, K6, the same pattern).
-	perMachine, _ := loadFleetConfig(ex, ctx)
+	perMachine, _ := loadDeployConfig(ex, ctx)
 	return mergedNestedRootsFrom(rp, perMachine), nil
 }
 
 // mergedNestedRootsFrom is the PURE merge step: project deploy tree (project then local overlay
 // wins per key, deploykit.MergeDeployConfigs — the SAME precedence the merged-tree read uses),
-// callable directly from a test with in-memory fixtures (no LoadFleetConfig I/O).
-func mergedNestedRootsFrom(rp *spec.ResolvedProject, perMachine *deploykit.FleetConfig) map[string]deploykit.FleetNode {
-	projectFleet := make(map[string]deploykit.FleetNode, len(rp.Deploy))
+// callable directly from a test with in-memory fixtures (no LoadDeployConfig I/O).
+func mergedNestedRootsFrom(rp *spec.ResolvedProject, perMachine *deploykit.DeployConfig) map[string]deploykit.DeployNode {
+	projectFleet := make(map[string]deploykit.DeployNode, len(rp.Deploy))
 	for name, node := range rp.Deploy {
 		if node != nil {
-			projectFleet[name] = deploykit.FleetNode(*node)
+			projectFleet[name] = deploykit.DeployNode(*node)
 		}
 	}
-	merged := deploykit.MergeDeployConfigs(&deploykit.FleetConfig{Fleet: projectFleet}, perMachine)
+	merged := deploykit.MergeDeployConfigs(&deploykit.DeployConfig{Deploy: projectFleet}, perMachine)
 	if merged == nil {
 		return nil
 	}
-	return merged.Fleet
+	return merged.Deploy
 }
 
-func sortedRootKeys(roots map[string]deploykit.FleetNode) []string {
+func sortedRootKeys(roots map[string]deploykit.DeployNode) []string {
 	keys := make([]string, 0, len(roots))
 	for k := range roots {
 		keys = append(keys, k)
