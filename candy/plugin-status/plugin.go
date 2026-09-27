@@ -26,12 +26,16 @@ package status
 
 import (
 	"context"
+	"embed"
 	"fmt"
 	"os"
 
 	"github.com/opencharly/sdk"
 	pb "github.com/opencharly/spec/proto"
 )
+
+//go:embed schema/*.cue
+var schemaFS embed.FS
 
 // calver is this plugin candy's CalVer identity (matches charly.yml version:).
 const calver = "2026.194.1600"
@@ -41,13 +45,14 @@ func NewProvider() pb.ProviderServer { return &provider{} }
 
 // NewMeta advertises command:status — the COMPILED-IN registry path resolves it
 // (registerCompiledPlugin → resolve(ClassCommand,"status") → dispatchInProcCommand →
-// Invoke(OpRun) with the threaded in-proc reverse channel) — plus the self-contained doc schema
-// (nil: command:status is input-less — the args are plain CLI tokens, never a `plugin_input`
-// envelope), via sdk.NewMeta.
+// Invoke(OpRun) with the threaded in-proc reverse channel) — together with this plugin's OWN
+// self-contained CUE schema (schema/status.cue) served over Describe via sdk.NewMeta: there is
+// NO schema-less plugin, the schema is the uniform surface every plugin presents even where a
+// capability's authored input is its pass-through CLI grammar, never a `plugin_input` envelope.
 func NewMeta() pb.PluginMetaServer {
 	return sdk.NewMeta(calver,
 		[]sdk.ProvidedCapability{{Class: "command", Word: "status"}},
-		nil)
+		schemaFS)
 }
 
 // CliMain is the out-of-process CLI entrypoint (only reached when status is NOT compiled in).
