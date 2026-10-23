@@ -41,8 +41,8 @@ charly status <name> --json
 
 ## Related
 
-- Owning skill: `/charly-core:charly-status` — the `charly status` surface. This
-  candy carries no `skill:` entity of its own; the gap is tracked in
-  [opencharly/opencharly#291](https://github.com/opencharly/opencharly/issues/291).
+- Owning skill: `/charly-core:charly-status` — the `charly status` surface,
+  projected from this candy's own `skill:` entity; the body is
+  `.agents/skills/charly-status/SKILL.md`.
 - `/charly-internals:plugin` — the plugin/provider model.
 - [`opencharly/charly`](https://github.com/opencharly/charly) — the charly CLI.
