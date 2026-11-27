@@ -17,7 +17,7 @@ import (
 // nested_tree.go — the DECLARED nested-deployment tree pre-resolution, ported from
 // charly/status_nested.go (K5). The former host header claimed this was CORE-COUPLED
 // ("DeployConfig/ResolveDeployChain/NestedExecutor... a plugin cannot decode or dial") —
-// that claim was STALE relative to what candy/plugin-substrate's own android status collector
+// that claim was STALE relative to candy/plugin-substrate's own nested status collector
 // already proved: deploykit.LoadDeployConfig/MergeDeployConfigs/ClassifyTarget/ResolveDeployChain
 // are ALL sdk-portable, so a plugin decodes + dials them exactly like the host did. The ONLY thing
 // that genuinely could not cross the process boundary was never true — it was never attempted.
@@ -149,7 +149,7 @@ func probeNestedChildLive(childPath string, roots map[string]deploykit.DeployNod
 }
 
 // nestedChildKind maps a nested node's target to the SubstrateKind used for the row's KIND cell.
-// deploykit.ClassifyTarget normalizes empty/legacy spellings, so pod/vm/kubernetes/local/android all
+// deploykit.ClassifyTarget normalizes empty/legacy spellings, so pod/vm/kubernetes/local all
 // resolve to their canonical kind.
 func nestedChildKind(child *deploykit.DeployNode) spec.SubstrateKind {
 	switch deploykit.ClassifyTarget(child) {
@@ -159,8 +159,6 @@ func nestedChildKind(child *deploykit.DeployNode) spec.SubstrateKind {
 		return spec.SubstrateKubernetes
 	case "local", "host":
 		return spec.SubstrateLocal
-	case "android":
-		return spec.SubstrateAndroid
 	default:
 		return spec.SubstratePod
 	}
@@ -204,8 +202,8 @@ func loadDeployConfig(ex *sdk.Executor, ctx context.Context) (*deploykit.DeployC
 
 // mergedNestedRoots returns the declared deployment tree (project + per-machine overlay) — the
 // I/O half: fetch the project envelope + the operator's per-host overlay, then hand off to the
-// PURE mergedNestedRootsFrom. Mirrors candy/plugin-substrate's status_android_collect.go split
-// (fetchResolvedProject + loadDeployConfig in the outer function, collectAndroidDeployNodes as the
+// PURE mergedNestedRootsFrom. Mirrors candy/plugin-substrate's nested status collector split
+// (fetchResolvedProject + loadDeployConfig in the outer function, the nested-deploy collector as the
 // pure plain-parameter function) exactly, R3.
 func mergedNestedRoots(ex *sdk.Executor, ctx context.Context) (map[string]deploykit.DeployNode, error) {
 	rp, err := resolvedProject(ex, ctx)
