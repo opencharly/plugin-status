@@ -16,7 +16,7 @@ import (
 // command.go — the externalized `charly status` command. The plugin OWNS the Kong grammar
 // (moved from charly/status.go's StatusCmd) + the declared-nested-tree pre-resolution
 // (nested_tree.go, K5) + the PURE nested-overlay fold (overlay.go) + the render output
-// (render.go). Only the LIVE per-substrate collection (pod/vm/kubernetes/local/android) is the compiled-in
+// (render.go). Only the LIVE per-substrate collection (pod/vm/kubernetes/local) is the compiled-in
 // verb:status-fanout (candy/plugin-substrate), which the plugin InvokeProvider's DIRECTLY.
 //
 // status is COMPILED-IN (charly.yml compiled_plugins): its Invoke(OpRun) runs in charly's process

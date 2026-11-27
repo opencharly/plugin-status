@@ -13,7 +13,7 @@ plugin-status:
             from charly/status_render.go). No plugin-specific command LOGIC is left in core.
 
             The ONE thing the plugin cannot do itself is the LIVE collection engine — fan out
-            across every deployment substrate (pod/vm/kubernetes/local/android) and probe live tools.
+            across every deployment substrate (pod/vm/kubernetes/local) and probe live tools.
             That engine now lives in candy/plugin-substrate (status_flat.go's flatCollector,
             K6 — the former charly/status_collector.go, whole-file moved; the earlier "stays
             core, registry-boundary blocker" verdict on it was reopened and reversed) and is

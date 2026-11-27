@@ -8,7 +8,7 @@ pre-resolution, the pure nested-deployment overlay fold, and the render output
 plugin because its `Invoke(OpRun)` needs the in-proc reverse channel to reach
 `verb:status-fanout` — the live collection engine in the sibling
 `plugin-substrate` that fans out across every deployment substrate
-(pod/vm/kubernetes/local/android) and probes live tools. The out-of-process
+(pod/vm/kubernetes/local) and probes live tools. The out-of-process
 `CliMain` path has no reverse channel.
 
 The plugin also serves `sdk.OpStatusCollect` — the programmatic status-collection

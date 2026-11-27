@@ -18,25 +18,25 @@ import (
 //
 // Scenario (mirrors the former charly/status_nested_test.go cases, now expressed as the
 // pre-resolved wire shape a real buildStatusRootsTree call would produce):
-//   - root "check-android-emulator-pod" (Kind pod) has two declared children:
-//   - "device": MatchKeys=[dotted, flattened]; a flat android row exists at the DOTTED key
-//     (Source "adb") → CLAIMED, real data inherited, removed from the top level.
-//   - "device-net": no flat row anywhere → SYNTHESIZED declared/nested.
+//   - root "check-nested-pod" (Kind pod) has two declared children:
+//   - "worker": MatchKeys=[dotted, flattened]; a flat pod row exists at the DOTTED key
+//     (Source "podman") → CLAIMED, real data inherited, removed from the top level.
+//   - "worker-net": no flat row anywhere → SYNTHESIZED declared/nested.
 //   - root "stack-vm" (Kind vm) has one declared child "web": MatchKeys=[dotted, flattened]; a
 //     flat pod row exists at the FLATTENED key (NestedContainerName) → CLAIMED via the second
 //     match-key candidate, proving the priority order.
 //   - an unrelated flat row "redis" has no declared root → left untouched at the top level.
 func TestOverlayGolden(t *testing.T) {
-	const androidParent = "check-android-emulator-pod"
+	const podParent = "check-nested-pod"
 	const vmParent = "stack-vm"
-	devicePath := androidParent + ".device"
-	deviceNetPath := androidParent + ".device-net"
+	workerPath := podParent + ".worker"
+	workerNetPath := podParent + ".worker-net"
 	webDotted := vmParent + ".web"
 	webFlat := kit.NestedContainerName(webDotted)
 
 	rows := []spec.DeploymentStatus{
-		{Kind: spec.SubstratePod, Image: androidParent, Status: "running", Container: "charly-" + androidParent, RunMode: "quadlet", Source: "podman"},
-		{Kind: spec.SubstrateAndroid, Image: devicePath, Status: "online", Container: "emulator-5554", Network: "in-pod (charly-" + androidParent + ")", RunMode: "quadlet", Source: "adb"},
+		{Kind: spec.SubstratePod, Image: podParent, Status: "running", Container: "charly-" + podParent, RunMode: "quadlet", Source: "podman"},
+		{Kind: spec.SubstratePod, Image: workerPath, Status: "running", Container: "charly-worker", Network: "in-pod (charly-" + podParent + ")", RunMode: "quadlet", Source: "podman"},
 		{Kind: spec.SubstrateVM, Image: vmParent, Status: "running", Container: "stack-vm", RunMode: "quadlet", Source: "libvirt"},
 		{Kind: spec.SubstratePod, Image: webFlat, Status: "running", Uptime: "Up 3 minutes", Container: "charly-" + webFlat, RunMode: "quadlet", Source: "podman"},
 		{Kind: spec.SubstratePod, Image: "redis", Status: "running", Container: "charly-redis", RunMode: "quadlet", Source: "podman"},
@@ -44,11 +44,11 @@ func TestOverlayGolden(t *testing.T) {
 
 	roots := []spec.StatusNestedNode{
 		{
-			Key: androidParent, Path: androidParent, Kind: spec.SubstratePod, HasChildren: true,
-			MatchKeys: []string{androidParent},
+			Key: podParent, Path: podParent, Kind: spec.SubstratePod, HasChildren: true,
+			MatchKeys: []string{podParent},
 			Children: []*spec.StatusNestedNode{
-				{Key: "device", Path: devicePath, Kind: spec.SubstrateAndroid, MatchKeys: []string{devicePath, kit.NestedContainerName(devicePath)}},
-				{Key: "device-net", Path: deviceNetPath, Kind: spec.SubstrateAndroid, MatchKeys: []string{deviceNetPath, kit.NestedContainerName(deviceNetPath)}},
+				{Key: "worker", Path: workerPath, Kind: spec.SubstratePod, MatchKeys: []string{workerPath, kit.NestedContainerName(workerPath)}},
+				{Key: "worker-net", Path: workerNetPath, Kind: spec.SubstratePod, MatchKeys: []string{workerNetPath, kit.NestedContainerName(workerNetPath)}},
 			},
 		},
 		{
@@ -72,23 +72,23 @@ func TestOverlayGolden(t *testing.T) {
 	const want = `[
   {
     "kind": "pod",
-    "image": "check-android-emulator-pod",
+    "image": "check-nested-pod",
     "status": "running",
-    "container": "charly-check-android-emulator-pod",
+    "container": "charly-check-nested-pod",
     "run_mode": "quadlet",
     "nested": [
       {
-        "kind": "android",
-        "image": "device",
-        "status": "online",
-        "container": "emulator-5554",
-        "network": "in-pod (charly-check-android-emulator-pod)",
+        "kind": "pod",
+        "image": "worker",
+        "status": "running",
+        "container": "charly-worker",
+        "network": "in-pod (charly-check-nested-pod)",
         "run_mode": "quadlet",
-        "source": "adb"
+        "source": "podman"
       },
       {
-        "kind": "android",
-        "image": "device-net",
+        "kind": "pod",
+        "image": "worker-net",
         "status": "declared",
         "container": "",
         "run_mode": "quadlet",

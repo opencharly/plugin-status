@@ -10,16 +10,16 @@ description: |-
 
 `charly status` is the **unified deployment-status surface**: one table (or one
 JSON array, or a single-deployment detail view) showing every charly deployment
-across all five substrates — **pod, vm, kubernetes, local, android** — side by side.
+across all four substrates — **pod, vm, kubernetes, local** — side by side.
 A leading **KIND** column / `"kind"` JSON field discriminates which substrate
 each row came from.
 
 The architecture is a **generic word-dispatched fan-out**, not a registry: ALL
-FIVE substrates (pod/vm/kubernetes/local/android) are collected by ONE compiled-in
+FOUR substrates (pod/vm/kubernetes/local) are collected by ONE compiled-in
 provider (`candy/plugin-substrate`), served on its kind-provider `Invoke` as
 `sdk.OpStatusCollect`, dispatched by word — there is no `SubstrateCollector`
 interface or `init()`-time registry left in core (both were deleted once the
-last substrate, android, moved out). `flatCollector.collectFlat`
+per-substrate collectors moved out). `flatCollector.collectFlat`
 (candy/plugin-substrate/status_flat.go — the former core `Collector.collectFlat`
 is DELETED, K-wave 2) calls each word over the registry + reaches the
 reverse-channel executor so the plugin can
@@ -30,13 +30,13 @@ by `(Kind, image)`. The pod collector still does the batched `podman ps` +
 `podman inspect` + worker-pool probe fan-out (host probes — CDP/VNC — in
 parallel goroutines; guest probes — supervisord/dbus/charly/wl/sway — batched into
 one `podman exec sh -c`); the other collectors read their own backends
-(libvirt for vm, client-go for live kubernetes, the install ledger for local, adb for
-android) — ALL inside the plugin now.
+(libvirt for vm, client-go for live kubernetes, the install ledger for local) — ALL
+inside the plugin now.
 
 **Graceful degradation is the contract.** A word resolve miss or an
 `Invoke`/collect error logs a single `WARNING:` to stderr and contributes zero
 rows, but NEVER aborts the whole command. So `charly status` on a host with
-only podman shows the pod rows and silently omits vm/kubernetes/android; the surface
+only podman shows the pod rows and silently omits vm/kubernetes; the surface
 always renders what it can.
 
 Source layout:
@@ -44,8 +44,8 @@ Source layout:
 The `charly status` surface is split across TWO homes now (K6 retired the
 third): the **command:status plugin** owns the CLI + render + the PURE nested
 overlay + the declared-nested-tree pre-resolution; the **substrate plugin**
-(candy/plugin-substrate) owns EVERYTHING ELSE — ALL FIVE per-substrate
-COLLECTORS (pod/vm/kubernetes/local/android), the FLAT fan-out + deploy-cone
+(candy/plugin-substrate) owns EVERYTHING ELSE — ALL per-substrate
+COLLECTORS (pod/vm/kubernetes/local), the FLAT fan-out + deploy-cone
 ENRICHMENT (formerly charly/status_collector.go's Collector — the "stays core,
 registry-boundary blocker" verdict was reopened and reversed: the registry
 fan-out dissolves into a direct in-package call once the orchestration moves
@@ -77,8 +77,8 @@ former `status-substrate` HostBuild seam is DELETED, K-wave 2).
   No status-specific logic remains in core.
 - `candy/plugin-substrate/status_flat.go` — `flatCollector.collectFlat` (the
   substrate fan-out + merge + sort) / `flatCollector.collectSingle`;
-  `collectWord` (a DIRECT in-package call to `statusCollect` for ALL FIVE
-  words — no registry, no wire round-trip); `enrichOne` (the DEPLOY-ENRICHMENT
+  `collectWord` (a DIRECT in-package call to `statusCollect` for every
+  word — no registry, no wire round-trip); `enrichOne` (the DEPLOY-ENRICHMENT
   half — charly.yml tunnel + image-label fallback, applied to the pod
   collector's LIVE rows); `enrichVmRow` (SSH-port/network from the matching
   target:vm deploy entry); `lookupDeploy`; `resolveSystemdState`;
@@ -87,7 +87,7 @@ former `status-substrate` HostBuild seam is DELETED, K-wave 2).
   (plugin.go) — an INTERNAL-ONLY verb, never a CLI subcommand, mirroring the
   `verb:libvirt`/`verb:credential`/`verb:arbiter` internal-dispatch precedent.
 - `candy/plugin-substrate/status_collect.go` — the COLLECTOR OpStatusCollect
-  dispatch (by word pod/vm/kubernetes/local/android — ALL FIVE now).
+  dispatch (by word pod/vm/kubernetes/local).
 - `candy/plugin-substrate/status_pod.go` — the pod LIVE collection (SnapshotAll +
   the worker-pool fan-out + `collectPodLive` row builder + `runPodProbes` +
   `applyQuadletDescription` + `enabledQuadlets` + `parseQuadletDescription` +
@@ -96,8 +96,6 @@ former `status-substrate` HostBuild seam is DELETED, K-wave 2).
   vm rows, `Source="libvirt"`).
 - `candy/plugin-substrate/status_kubernetes.go` — the kubernetes collector (cluster
   workloads; live client-go probing under `--nested`).
-- `candy/plugin-substrate/status_android_collect.go` — the android collector
-  (declared `android` devices → rows via adb `host:devices`, `Source="adb"`).
 - `candy/plugin-substrate/status_local.go` — the local install-ledger collector
   (`Source="ledger"`).
 - `candy/plugin-substrate/status_probes.go` — `Probe` / `HostProbe` /
@@ -121,7 +119,7 @@ former `status-substrate` HostBuild seam is DELETED, K-wave 2).
 
 | Action | Command | Description |
 |--------|---------|-------------|
-| Table (running) | `charly status` | Show all deployments across every substrate (pod/vm/kubernetes/local/android) |
+| Table (running) | `charly status` | Show all deployments across every substrate (pod/vm/kubernetes/local) |
 | Table (all) | `charly status --all` | Include stopped and enabled services |
 | Nested probe | `charly status --nested` | Probe nested children + live kubernetes workloads (multi-hop, slower) |
 | Detail | `charly status <image>` | Key-value detail for one service |
@@ -137,9 +135,9 @@ render as indented IMAGE-cell rows (`  └─ <child>`) under their parent.
 
 | Column | Description |
 |--------|-------------|
-| KIND | Substrate discriminator: `pod` / `vm` / `kubernetes` / `local` / `android` (`-` when unset). Names which collector produced the row |
-| IMAGE | `image` for base deploys, `image/instance` for multi-instance (matches `deployKey` shape); for a vm/local/android row it is the vm name / local-template label / declared android device key |
-| STATUS | `running` / `stopped` / `enabled` / `failed` / `dead` / `paused`; substrate-specific values: `applied` (local ledger), `online` / `offline` / `absent` (android), `declared` / `reachable` / `unreachable` (nested children) |
+| KIND | Substrate discriminator: `pod` / `vm` / `kubernetes` / `local` (`-` when unset). Names which collector produced the row |
+| IMAGE | `image` for base deploys, `image/instance` for multi-instance (matches `deployKey` shape); for a vm/local row it is the vm name / local-template label |
+| STATUS | `running` / `stopped` / `enabled` / `failed` / `dead` / `paused`; substrate-specific values: `applied` (local ledger), `declared` / `reachable` / `unreachable` (nested children) |
 | PORTS | Sorted, deduped host port numbers from runtime `podman ps` (charly.yml / image labels are fallbacks for non-running rows) |
 | TUNNEL | `provider (all ports)` / `provider (ports H,H,H)` / `-` — read from charly.yml |
 | DEVICES | Compact tokens (`gpu`, `dri`, `kvm`, `fuse`, `tun`) sorted alphabetically |
@@ -164,14 +162,14 @@ render as indented IMAGE-cell rows (`  └─ <child>`) under their parent.
 | Volumes | `data: bind /home/user/data` |
 | Network | `host` |
 | Tunnel | `cloudflare: jupyter.example.com` |
-| Nested | `android device (online)` — one line per declared nested child |
+| Nested | `web (running)` — one line per declared nested child |
 
 The single-image detail path is pod-scoped (`Collector.Single` covers the
 podman/docker substrate). For the cross-substrate view use the table.
 
 ## Nested deployments
 
-A deploy can declare a nested tree (`pod → android`, `vm → pod`, `vm → host`,
+A deploy can declare a nested tree (`vm → pod`, `vm → host`,
 …). `charly status` reflects it WITHOUT a dedicated "nested" collector — a nested
 child's venue is always REACHED THROUGH its parent, so `applyNestedOverlay`
 post-processes the already-merged flat rows: it reads the DECLARED tree from
@@ -180,15 +178,15 @@ deploys + `~/.config/charly/charly.yml`) and attaches each declared child to its
 parent row's `Nested[]`.
 
 **Dedup — a declared nested child appears exactly once.** A child substrate
-collector may ALSO surface a flat top-level row for the same deployment: an
-`AndroidCollector` row keyed on the dotted path (`<parent>.device`), or a
+collector may ALSO surface a flat top-level row for the same deployment: a
+substrate collector's row keyed on the dotted path (`<parent>.<child>`), or a
 nested-pod row keyed on the flattened container name (`NestedContainerName` →
 `<seg1>_<seg2>`). When the overlay finds such a flat row, it **MOVES** that
 row's real collected data (status / uptime / container / ports / devices /
 tools / volumes / network / tunnel) into the nested position — preserving its
-real `Source` (`adb`, `podman`, …), NOT restamping `nested` — and **REMOVES**
-the flat row from the top level. So a nested android device shows ONLY under
-its parent pod's `nested[]`, never also as a flat row. A child with NO flat
+real `Source` (`libvirt`, `podman`, …), NOT restamping `nested` — and **REMOVES**
+the flat row from the top level. So a nested child shows ONLY under
+its parent's `nested[]`, never also as a flat row. A child with NO flat
 match keeps the synthesized declared row (`Source="nested"`).
 
 - **Default** (`charly status`): a child with a flat match inherits that flat row's
@@ -201,7 +199,7 @@ match keeps the synthesized declared row (`Source="nested"`).
   under a STRICT 4-second per-child context deadline. A timed-out / failing
   child renders `unreachable`; the table is NEVER blocked. The deadline is a
   context cancellation, never a sleep/retry loop. `--nested` also turns on live
-  kubernetes-workload probing and the android `sys.boot_completed` readiness poll.
+  kubernetes-workload probing.
 
 A synthesized (no-flat-match) child carries `Source="nested"` in JSON so a
 consumer tells a declared-only child apart from a natively-collected substrate
@@ -236,7 +234,7 @@ package-level `hostProbes` / `guestProbes` slice. No other file needs editing.
 `charly status --json` emits an array of `DeploymentStatus` objects — one per row,
 across every substrate. The leading `"kind"` field is the substrate
 discriminator; `"source"` records provenance (`podman` / `libvirt` / `ledger` /
-`adb` / `nested`); `"ports"` is a structured array (not `[]string`); `"nested"`
+`nested`); `"ports"` is a structured array (not `[]string`); `"nested"`
 is the recursive child tree (omitted when empty):
 
 ```json
@@ -257,22 +255,22 @@ is the recursive child tree (omitted when empty):
 }
 ```
 
-A deployment with a declared nested tree (e.g. `pod → android`) carries its
+A deployment with a declared nested tree (e.g. `vm → pod`) carries its
 children under `"nested"`. A child that surfaced as a flat substrate row is
-MOVED here with its real `"source"` (`adb`) and its collected data; a child
+MOVED here with its real `"source"` (`podman`) and its collected data; a child
 with no flat row is synthesized (`"source": "nested"`, `"status": "declared"`):
 
 ```json
 {
   "kind": "pod",
-  "image": "android-emulator",
+  "image": "check-nested-pod",
   "status": "running",
-  "container": "charly-android-emulator",
+  "container": "charly-check-nested-pod",
   "run_mode": "quadlet",
   "source": "podman",
   "nested": [
-    { "kind": "android", "image": "device", "status": "online", "container": "emulator-5554", "source": "adb" },
-    { "kind": "android", "image": "device-net", "status": "declared", "source": "nested" }
+    { "kind": "pod", "image": "worker", "status": "running", "container": "charly-worker", "source": "podman" },
+    { "kind": "pod", "image": "worker-net", "status": "declared", "source": "nested" }
   ]
 }
 ```
@@ -282,7 +280,7 @@ substring for a substrate row is `"kind": "pod"` — a SPACE after the colon.
 Check `command` checks that grep `charly status --json` output assert on the spaced
 form (e.g. `contains: '"kind": "vm"'`). The four disposable check deploys each carry a
 `status-shows-*` member check that proves the live `charly status --json`
-reports the right kind (and, for android, the `"nested"` tree).
+reports the right kind (and, for a nested deploy, the `"nested"` tree).
 
 Single-image (`charly status <image> -i <inst> --json`) emits one object,
 not an array.

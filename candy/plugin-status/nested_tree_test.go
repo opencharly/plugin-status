@@ -12,7 +12,7 @@ import (
 // nested-deployment tree pre-resolution moved plugin-side (nested_tree.go), so these tests moved
 // with it. Exercises the PURE buildStatusRootsTreeFrom/mergedNestedRootsFrom split directly with
 // in-memory deploykit.DeployNode fixtures — no executor stub, no host file I/O (R3, mirrors
-// candy/plugin-substrate's collectAndroidDeployNodes test pattern). The PURE fold
+// the substrate plugins' nested-deploy collection test pattern). The PURE fold
 // (claim -> inherit real data -> drop from top level; synthesize declared/nested; sorted order;
 // dedup) lives in overlay.go, operating on the []spec.StatusNestedNode this file builds — its
 // byte-parity is proven by overlay_golden_test.go. This file proves the pre-resolution alone: the
@@ -22,17 +22,17 @@ import (
 // children (they are folded top-level Deploy entries).
 
 // nestedRoots builds a minimal declared roots map carrying one declared nested topology: a
-// target:pod parent check-android-emulator-pod with two target:android nested children device and
-// device-net (the check-android-emulator-pod shape), plus an unrelated flat pod deploy the
+// target:pod parent check-nested-pod with two target:pod nested children worker and
+// worker-net (a pod-in-pod shape), plus an unrelated flat pod deploy the
 // tree-builder must leave alone (no root emitted for a memberless entry).
 func nestedRoots() map[string]deploykit.DeployNode {
 	return map[string]deploykit.DeployNode{
-		"check-android-emulator-pod": {
+		"check-nested-pod": {
 			Target: "pod",
-			Image:  "android-emulator",
+			Image:  "pod-app",
 			Member: []spec.Member{
-				{Name: "device", Position: spec.PositionInSubstrate, Node: &deploykit.DeployNode{Target: "android", From: "pixel9a-36", AddCandy: []string{"android-test-apps"}}},
-				{Name: "device-net", Position: spec.PositionInSubstrate, Node: &deploykit.DeployNode{Target: "android", From: "pixel9a-endpoint", AddCandy: []string{"android-apidemos"}}},
+				{Name: "worker", Position: spec.PositionInSubstrate, Node: &deploykit.DeployNode{Target: "pod", From: "app-a", AddCandy: []string{"test-apps"}}},
+				{Name: "worker-net", Position: spec.PositionInSubstrate, Node: &deploykit.DeployNode{Target: "pod", From: "app-b", AddCandy: []string{"sample-app"}}},
 			},
 		},
 		"some-flat-pod": {Target: "pod", Image: "redis"},
@@ -67,8 +67,8 @@ func TestBuildStatusRootsTreeFrom_ChildlessRootSkipped(t *testing.T) {
 	if len(roots) != 1 {
 		t.Fatalf("roots = %d, want 1 (only the entry WITH children emits a root): %+v", len(roots), roots)
 	}
-	if roots[0].Key != "check-android-emulator-pod" {
-		t.Fatalf("root Key = %q, want %q", roots[0].Key, "check-android-emulator-pod")
+	if roots[0].Key != "check-nested-pod" {
+		t.Fatalf("root Key = %q, want %q", roots[0].Key, "check-nested-pod")
 	}
 	if findRootNode(roots, "some-flat-pod") != nil {
 		t.Errorf("childless entry some-flat-pod must not emit a root node")
@@ -76,10 +76,10 @@ func TestBuildStatusRootsTreeFrom_ChildlessRootSkipped(t *testing.T) {
 }
 
 // TestBuildStatusRootsTreeFrom_DeclaredChildren verifies the root + child shape: root
-// MatchKeys=[key], HasChildren=true; each android child's Kind, sorted order, and
+// MatchKeys=[key], HasChildren=true; each nested pod child's Kind, sorted order, and
 // MatchKeys=[dottedPath, flattenedName] (in that priority order).
 func TestBuildStatusRootsTreeFrom_DeclaredChildren(t *testing.T) {
-	const parent = "check-android-emulator-pod"
+	const parent = "check-nested-pod"
 	roots := buildStatusRootsTreeFrom(nestedRoots(), false)
 
 	root := findRootNode(roots, parent)
@@ -99,13 +99,13 @@ func TestBuildStatusRootsTreeFrom_DeclaredChildren(t *testing.T) {
 		t.Fatalf("root.Children = %d, want 2: %+v", len(root.Children), root.Children)
 	}
 
-	for _, key := range []string{"device", "device-net"} {
+	for _, key := range []string{"worker", "worker-net"} {
 		c := findChildNode(root.Children, key)
 		if c == nil {
 			t.Fatalf("child %q not found", key)
 		}
-		if c.Kind != spec.SubstrateAndroid {
-			t.Errorf("child %q Kind = %q, want %q", key, c.Kind, spec.SubstrateAndroid)
+		if c.Kind != spec.SubstratePod {
+			t.Errorf("child %q Kind = %q, want %q", key, c.Kind, spec.SubstratePod)
 		}
 		wantPath := parent + "." + key
 		wantMatchKeys := []string{wantPath, kit.NestedContainerName(wantPath)}
@@ -163,7 +163,7 @@ func TestBuildStatusRootsTreeFrom_MatchKeysOrderVmPod(t *testing.T) {
 // backend: every declared child's LiveStatus resolves to "unreachable" (deadline-bounded, never
 // left empty) — the root itself is never probed (only children carry a live verdict).
 func TestBuildStatusRootsTreeFrom_LiveProbeUnreachable(t *testing.T) {
-	const parent = "check-android-emulator-pod"
+	const parent = "check-nested-pod"
 	roots := buildStatusRootsTreeFrom(nestedRoots(), true)
 
 	root := findRootNode(roots, parent)
@@ -232,9 +232,8 @@ func TestBuildStatusRootsTreeFrom_MemberPositionClass(t *testing.T) {
 }
 
 // TestMergedNestedRootsFrom_PerMachineWinsPerKey verifies the merge precedence: a per-machine
-// overlay entry wins over the project entry sharing the same key (mirrors
-// candy/plugin-substrate's TestCollectAndroidDeployNodes_PerMachineWinsPerKey for the SAME
-// deploykit.MergeDeployConfigs primitive).
+// overlay entry wins over the project entry sharing the same key (the SAME
+// deploykit.MergeDeployConfigs primitive the substrate collectors use).
 func TestMergedNestedRootsFrom_PerMachineWinsPerKey(t *testing.T) {
 	rp := &spec.ResolvedProject{
 		Deploy: map[string]*spec.Deploy{
